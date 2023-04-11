@@ -15,7 +15,7 @@ contract GovernanceTokenFactory {
     }
     event TokenCreated(address tokenAddress, address creator);
     
-    function createToken(string memory name, string memory symbol, uint256 totalSupply, address[] memory stakeholders, uint256[] memory percentages) onlytokengenerator public returns(address) {
+    function createToken(string memory name, string memory symbol, uint256 totalSupply, address[] memory stakeholders) onlytokengenerator public returns(address) {
         require(stakeholders.length == percentages.length, "Stakeholders and percentages arrays must have the same length");
         
         // Create a new governance token contract
@@ -23,16 +23,6 @@ contract GovernanceTokenFactory {
         
         emit TokenCreated(address(newToken), msg.sender);
         return address(newToken);
-
-	// Calculate and distribute token amounts based on percentage ownership
-        uint256 totalPercentage = 0;
-        for (uint256 i = 0; i < stakeholders.length; i++) {
-            totalPercentage += percentages[i];
-            uint256 amount = totalSupply * percentages[i] / 100;
-            newToken.transfer(stakeholders[i], amount);
-        }
-        require(totalPercentage == 100, "Percentage ownership must add up to 100");
-        
     }
 }
 
@@ -43,9 +33,16 @@ contract GovernanceToken is ERC20 {
     uint256 public totalSupply;
     address public owner;
     
-    mapping(address => uint256) public balances;
+    mapping(address => uint256) private balances;
     mapping(address => mapping(address => uint256)) public allowed;
     mapping(uint256 => Proposal) public proposals;
+    
+    struct Percentage {
+    address addr;
+    uint256 value;
+}
+
+    Percentage[] private percentages;
     
     struct Proposal {
         uint256 id;
@@ -72,11 +69,16 @@ contract GovernanceToken is ERC20 {
         owner = _owner;
         balances[_owner] = _totalSupply;
         proposalCount = 0;
+        
     }
     
     function balanceOf(address _owner) public view returns (uint256) {
         return balances[_owner];
     }
+    
+    function addPercentage(address _addr, uint256 _value) public {
+    	percentages.push(Percentage(_addr, _value));
+}
     
     function transfer(address _to, uint256 _value) public returns (bool) {
         require(_to != address(0), "Invalid address");
@@ -109,20 +111,26 @@ contract GovernanceToken is ERC20 {
             mapping(address => bool)()
         );
     }
-    function vote(uint256 _proposalId, bool _voteFor) public returns (bool) {
-        require(_proposalId > 0 && _proposalId <= proposalCount, "Invalid proposal ID");
-        Proposal storage proposal = proposals[_proposalId];
-        require(block.timestamp >= proposal.startTime && block.timestamp <= proposal.endTime, "Voting period has ended");
-        require(balances[msg.sender] > 0, "You do not have any tokens to vote with");
-        require(!proposal.voters[msg.sender], "You have already voted on this proposal");
-        uint256 voteWeight = balances[msg.sender];
-        if (_voteFor) {
-        proposal.votesFor += voteWeight;
-        }  else {
-        proposal.votesAgainst += voteWeight;
-    }
-    proposal.voters[msg.sender] = true;
-    emit GovernanceVote(msg.sender, _proposalId, proposal.votesFor, proposal.votesAgainst);
-    return true;
+    function vote(uint256 _proposalId, uint256 _voteWeight) public returns (bool) {
+    	require(_proposalId > 0 && _proposalId <= proposalCount, "Invalid proposal ID");
+   	Proposal storage proposal = proposals[_proposalId];
+    	require(block.timestamp >= proposal.startTime && block.timestamp <= proposal.endTime, "Voting period has ended");
+    	require(balances[msg.sender] > 0, "You do not have any tokens to vote with");
+    	require(!proposal.voters[msg.sender], "You have already voted on this proposal");
+    	require(_voteWeight <= balances[msg.sender], "Vote weight cannot exceed token balance");
+    
+    	proposal.voters[msg.sender] = true;
+    	if (_voteWeight == 0) {
+        // No vote
+    	} else if (_voteWeight > 0) {
+        // Vote for
+        proposal.votesFor += _voteWeight;
+    	} else {
+        // Vote against
+        proposal.votesAgainst += -1 * _voteWeight;
+    	}
+    	emit GovernanceVote(msg.sender, _proposalId, proposal.votesFor, proposal.votesAgainst);
+    	return true;
 }
-    function approve(address _spender, uint256 _value) public returns
+
+   
